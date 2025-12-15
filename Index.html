@@ -1,0 +1,166 @@
+<!DOCTYPE html>
+<html lang="pt-br">
+<head>
+<meta charset="UTF-8">
+<title>Gravador Voz Robô</title>
+<style>
+body {
+    font-family: Arial, sans-serif;
+    background: #0f0f0f;
+    color: white;
+    text-align: center;
+    padding: 40px;
+}
+
+button {
+    padding: 15px 25px;
+    font-size: 16px;
+    margin: 10px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+#record { background: #e53935; color: white; }
+#stop { background: #1e88e5; color: white; }
+#download { background: #43a047; color: white; display:none; }
+
+audio {
+    margin-top: 20px;
+    width: 100%;
+}
+</style>
+</head>
+<body>
+
+<h1>🎤 Gravador de Voz Robótica</h1>
+
+<button id="record">Gravar</button>
+<button id="stop" disabled>Parar</button>
+<br>
+<button id="download">Baixar Áudio</button>
+
+<audio id="player" controls></audio>
+
+<script>
+let mediaRecorder;
+let audioChunks = [];
+
+const recordBtn = document.getElementById("record");
+const stopBtn = document.getElementById("stop");
+const downloadBtn = document.getElementById("download");
+const player = document.getElementById("player");
+
+recordBtn.onclick = async () => {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    mediaRecorder = new MediaRecorder(stream);
+    audioChunks = [];
+
+    mediaRecorder.ondataavailable = e => audioChunks.push(e.data);
+    mediaRecorder.start();
+
+    recordBtn.disabled = true;
+    stopBtn.disabled = false;
+};
+
+stopBtn.onclick = () => {
+    mediaRecorder.stop();
+
+    mediaRecorder.onstop = async () => {
+        const blob = new Blob(audioChunks);
+        const arrayBuffer = await blob.arrayBuffer();
+
+        const audioCtx = new AudioContext();
+        const buffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+        // Cria efeito robótico
+        const offlineCtx = new OfflineAudioContext(
+            buffer.numberOfChannels,
+            buffer.length,
+            buffer.sampleRate
+        );
+
+        const source = offlineCtx.createBufferSource();
+        source.buffer = buffer;
+
+        const distortion = offlineCtx.createWaveShaper();
+        distortion.curve = makeDistortionCurve(400);
+        distortion.oversample = '4x';
+
+        source.playbackRate.value = 0.85; // deixa voz robótica
+        source.connect(distortion);
+        distortion.connect(offlineCtx.destination);
+
+        source.start(0);
+
+        const rendered = await offlineCtx.startRendering();
+        const wavBlob = bufferToWave(rendered, rendered.length);
+
+        const url = URL.createObjectURL(wavBlob);
+        player.src = url;
+
+        downloadBtn.style.display = "inline-block";
+        downloadBtn.onclick = () => {
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = "voz_robo.wav";
+            a.click();
+        };
+    };
+
+    recordBtn.disabled = false;
+    stopBtn.disabled = true;
+};
+
+function makeDistortionCurve(amount) {
+    const k = amount;
+    const n = 44100;
+    const curve = new Float32Array(n);
+    for (let i = 0; i < n; i++) {
+        const x = i * 2 / n - 1;
+        curve[i] = (3 + k) * x * 20 * Math.PI / (Math.PI + k * Math.abs(x));
+    }
+    return curve;
+}
+
+function bufferToWave(abuffer, len) {
+    const numOfChan = abuffer.numberOfChannels;
+    const buffer = new ArrayBuffer(44 + len * numOfChan * 2);
+    const view = new DataView(buffer);
+
+    let offset = 0;
+
+    function writeString(s) {
+        for (let i = 0; i < s.length; i++) {
+            view.setUint8(offset++, s.charCodeAt(i));
+        }
+    }
+
+    writeString("RIFF");
+    view.setUint32(offset, 36 + len * 2, true); offset += 4;
+    writeString("WAVE");
+    writeString("fmt ");
+    view.setUint32(offset, 16, true); offset += 4;
+    view.setUint16(offset, 1, true); offset += 2;
+    view.setUint16(offset, numOfChan, true); offset += 2;
+    view.setUint32(offset, abuffer.sampleRate, true); offset += 4;
+    view.setUint32(offset, abuffer.sampleRate * numOfChan * 2, true); offset += 4;
+    view.setUint16(offset, numOfChan * 2, true); offset += 2;
+    view.setUint16(offset, 16, true); offset += 2;
+    writeString("data");
+    view.setUint32(offset, len * numOfChan * 2, true); offset += 4;
+
+    for (let i = 0; i < len; i++) {
+        for (let ch = 0; ch < numOfChan; ch++) {
+            const sample = abuffer.getChannelData(ch)[i];
+            view.setInt16(offset, sample * 0x7fff, true);
+            offset += 2;
+        }
+    }
+
+    return new Blob([view], { type: "audio/wav" });
+}
+</script>
+
+</body>
+</html>
